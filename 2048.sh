@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  BASH 2048 - Classic 2048 puzzle game with AI solver in pure Bash
+#  BASH 2048 - Classic 2048 puzzle game with Advanced AI solver in pure Bash
 # ==============================================================================
 
-# ANSI color codes
 C_RESET="\033[0m"
 C_BOLD="\033[1m"
 C_DIM="\033[2m"
@@ -14,10 +13,9 @@ C_RECORD="\033[38;5;214m"
 C_BOT_ON="\033[38;5;208m"
 C_BOT_OFF="\033[38;5;244m"
 
-# Tile colors (Background and Foreground ANSI)
 get_tile_color() {
     case "$1" in
-        0)    echo -e "\033[48;5;238m\033[38;5;244m" ;; # Empty
+        0)    echo -e "\033[48;5;238m\033[38;5;244m" ;;
         2)    echo -e "\033[48;5;253m\033[38;5;235m" ;;
         4)    echo -e "\033[48;5;229m\033[38;5;235m" ;;
         8)    echo -e "\033[48;5;215m\033[38;5;231m" ;;
@@ -48,7 +46,6 @@ cleanup() {
 }
 trap cleanup SIGINT SIGTERM EXIT
 
-# Board is 4x4: board[0..15]
 declare -a board=(0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0)
 declare -a prev_board=(0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0)
 prev_score=0
@@ -56,15 +53,12 @@ score=0
 won=0
 auto_mode=0
 
-# Sizing and centering
 calc_layout() {
     local term_cols term_lines
     term_cols=$(tput cols 2>/dev/null || echo 80)
     term_lines=$(tput lines 2>/dev/null || echo 24)
 
-    # Box width: 4 columns * 6 chars + 5 borders = 29
     BOX_W=29
-    # Box height: 4 rows * 2 lines + 5 borders = 13 (fits 19 lines nicely!)
     BOX_H=13
 
     OFFSET_X=$(( (term_cols - BOX_W) / 2 ))
@@ -85,7 +79,7 @@ draw_header() {
     move_to 0 1
     local mode_str="${C_BOT_OFF}[AI: OFF]${C_RESET}"
     if [[ $auto_mode -eq 1 ]]; then
-        mode_str="${C_BOT_ON}${C_BOLD}[AI: ON]${C_RESET}"
+        mode_str="${C_BOT_ON}${C_BOLD}[AI: ON (Auto)]${C_RESET}"
     fi
     printf " ${C_SCORE}Score: ${C_BOLD}%-5d${C_RESET} │ ${C_RECORD}Best: ${C_BOLD}%-5d${C_RESET} │ %b" "$score" "$HIGHSCORE" "$mode_str"
 }
@@ -105,12 +99,10 @@ render_board() {
     draw_header
 
     local y_start=3
-    # Top border
     move_to 0 $y_start
     printf "${C_BORDER}┌──────┬──────┬──────┬──────┐${C_RESET}"
 
     for r in 0 1 2 3; do
-        # Content row
         move_to 0 $(( y_start + 1 + r * 2 ))
         printf "${C_BORDER}│${C_RESET}"
         for c in 0 1 2 3; do
@@ -119,7 +111,6 @@ render_board() {
             printf "${C_BORDER}│${C_RESET}"
         done
 
-        # Separator or bottom border
         move_to 0 $(( y_start + 2 + r * 2 ))
         if [[ $r -lt 3 ]]; then
             printf "${C_BORDER}├──────┼──────┼──────┼──────┤${C_RESET}"
@@ -128,7 +119,6 @@ render_board() {
         fi
     done
 
-    # Controls footer
     move_to 0 $(( y_start + 10 ))
     printf " ${C_DIM}WASD/Arrows | TAB: AI | U: Undo | R: Reset | Q: Quit${C_RESET}"
 }
@@ -148,7 +138,6 @@ spawn_tile() {
     local rand_idx=$(( RANDOM % ${#empty_indices[@]} ))
     local target_slot=${empty_indices[rand_idx]}
 
-    # 90% chance of 2, 10% chance of 4
     if (( RANDOM % 10 == 0 )); then
         board[target_slot]=4
     else
@@ -170,13 +159,10 @@ restore_undo_state() {
     score=$prev_score
 }
 
-# Slide and merge 4 numbers (represented as an array passed by name)
-# Usage: slide_line row_arr
 slide_and_merge() {
     local -n _ref_line=$1
     local non_zero=()
 
-    # Step 1: Filter non-zeros
     for val in "${_ref_line[@]}"; do
         if [[ $val -ne 0 ]]; then
             non_zero+=($val)
@@ -187,7 +173,6 @@ slide_and_merge() {
     local i=0
     local len=${#non_zero[@]}
 
-    # Step 2: Merge adjacent duplicates
     while (( i < len )); do
         if (( i + 1 < len )) && [[ ${non_zero[i]} -eq ${non_zero[i+1]} ]]; then
             local sum=$(( non_zero[i] * 2 ))
@@ -203,7 +188,6 @@ slide_and_merge() {
         fi
     done
 
-    # Step 3: Pad with zeros to 4 elements
     while (( ${#merged[@]} < 4 )); do
         merged+=(0)
     done
@@ -232,11 +216,9 @@ move_right() {
     save_undo_state
     local moved=0
     for r in 0 1 2 3; do
-        # Reverse row
         local line=("${board[r*4+3]}" "${board[r*4+2]}" "${board[r*4+1]}" "${board[r*4]}")
         local orig=("${line[@]}")
         slide_and_merge line
-        # Store back in reverse
         for c in 0 1 2 3; do
             board[r*4+3-c]=${line[c]}
             if [[ ${orig[c]} -ne ${line[c]} ]]; then moved=1; fi
@@ -289,38 +271,92 @@ has_moves() {
     return 1
 }
 
-# Simple AI: Priority corner evaluation (Down, Left, Right, Up)
+# ==============================================================================
+#  ADVANCED HEURISTIC AI SOLVER
+# ==============================================================================
+# Snake-shaped weighting matrix concentrating largest tiles at bottom-left:
+#  Row 0:   [ 1,      2,     4,     8   ]
+#  Row 1:   [ 128,   64,    32,    16   ]
+#  Row 2:   [ 256,  512,  1024,  2048   ]
+#  Row 3:   [ 65536, 32768, 16384, 8192 ]
+declare -a AI_WEIGHTS=(
+    1     2     4     8
+  128    64    32    16
+  256   512  1024  2048
+65536 32768 16384  8192
+)
+
+eval_board() {
+    local score_val=0
+    local empty_cnt=0
+
+    for ((idx=0; idx<16; idx++)); do
+        local v=${board[idx]}
+        if [[ $v -eq 0 ]]; then
+            empty_cnt=$((empty_cnt + 1))
+        else
+            score_val=$((score_val + v * AI_WEIGHTS[idx]))
+        fi
+    done
+
+    # High bonus for keeping open space
+    score_val=$((score_val + empty_cnt * 50000))
+    echo $score_val
+}
+
 ai_step() {
-    # Preferred order to build high numbers in bottom-left corner
-    local saved_board=("${board[@]}")
-    local saved_score=$score
+    local backup_board=("${board[@]}")
+    local backup_score=$score
+    local best_move=""
+    local best_eval=-999999999
 
-    # Try Down
-    move_down
-    if [[ $? -eq 1 ]]; then spawn_tile; return; fi
+    # Test all 4 directions in order: Down, Left, Right, Up
+    for dir in "down" "left" "right" "up"; do
+        # Restore board
+        for ((i=0; i<16; i++)); do board[i]=${backup_board[i]}; done
+        score=$backup_score
 
-    # Try Left
-    for ((i=0; i<16; i++)); do board[i]=${saved_board[i]}; done; score=$saved_score
-    move_left
-    if [[ $? -eq 1 ]]; then spawn_tile; return; fi
+        local moved=0
+        case "$dir" in
+            "down")  move_down; moved=$? ;;
+            "left")  move_left; moved=$? ;;
+            "right") move_right; moved=$? ;;
+            "up")    move_up; moved=$? ;;
+        esac
 
-    # Try Right
-    for ((i=0; i<16; i++)); do board[i]=${saved_board[i]}; done; score=$saved_score
-    move_right
-    if [[ $? -eq 1 ]]; then spawn_tile; return; fi
+        if [[ $moved -eq 1 ]]; then
+            local ev
+            ev=$(eval_board)
+            if (( ev > best_eval )); then
+                best_eval=$ev
+                best_move=$dir
+            fi
+        fi
+    done
 
-    # Try Up
-    for ((i=0; i<16; i++)); do board[i]=${saved_board[i]}; done; score=$saved_score
-    move_up
-    if [[ $? -eq 1 ]]; then spawn_tile; return; fi
+    # Restore real state
+    for ((i=0; i<16; i++)); do board[i]=${backup_board[i]}; done
+    score=$backup_score
+
+    # Execute best move
+    if [[ -n "$best_move" ]]; then
+        case "$best_move" in
+            "down")  move_down ;;
+            "left")  move_left ;;
+            "right") move_right ;;
+            "up")    move_up ;;
+        esac
+        spawn_tile
+    fi
 }
 
 init_game() {
+    local keep_auto=${1:-0}
     calc_layout
     board=(0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0)
     score=0
     won=0
-    auto_mode=0
+    auto_mode=$keep_auto
     spawn_tile
     spawn_tile
     save_undo_state
@@ -333,7 +369,7 @@ main() {
     tput civis 2>/dev/null
     stty -echo 2>/dev/null
 
-    init_game
+    init_game 0
 
     while true; do
         if [[ $score -gt $HIGHSCORE ]]; then
@@ -345,23 +381,35 @@ main() {
 
         # Check Game Over
         if ! has_moves; then
-            move_to 0 $(( OFFSET_Y + 14 ))
-            printf "   ${C_SCORE}${C_BOLD}💀 GAME OVER! [R] Restart, [Q] Quit${C_RESET}   \n"
-            while true; do
-                IFS= read -rsn1 k
-                case "$k" in
-                    [rRкК]) init_game; break ;;
-                    [qQйЙ]) cleanup ;;
-                esac
-            done
-            continue
+            if [[ $auto_mode -eq 1 ]]; then
+                move_to 0 $(( OFFSET_Y + 14 ))
+                printf "  ${C_BOT_ON}${C_BOLD}🤖 AI GAME OVER! Restarting in 1s...${C_RESET} \n"
+                # Brief sleep, responsive to Q
+                for ((w=0; w<10; w++)); do
+                    IFS= read -rsn1 -t 0.1 k
+                    if [[ "$k" =~ [qQйЙ] ]]; then cleanup; fi
+                done
+                init_game 1
+                continue
+            else
+                move_to 0 $(( OFFSET_Y + 14 ))
+                printf "   ${C_SCORE}${C_BOLD}💀 GAME OVER! [R] Restart, [Q] Quit${C_RESET}   \n"
+                while true; do
+                    IFS= read -rsn1 k
+                    case "$k" in
+                        [rRкК]) init_game 0; break ;;
+                        [qQйЙ]) cleanup ;;
+                    esac
+                done
+                continue
+            fi
         fi
 
         # Input or AI step
         local key=""
         local timeout=0.15
         if [[ $auto_mode -eq 1 ]]; then
-            timeout=0.10
+            timeout=0.08
         fi
 
         IFS= read -rsn1 -t "$timeout" key
@@ -378,28 +426,25 @@ main() {
 
         local moved=0
         case "$key" in
-            # Up
             [wWцЦ]|$'\e[A'|$'\eOA')
+                auto_mode=0
                 move_up; moved=$? ;;
-            # Down
             [sSыЫ]|$'\e[B'|$'\eOB')
+                auto_mode=0
                 move_down; moved=$? ;;
-            # Left
             [aAфФ]|$'\e[D'|$'\eOD')
+                auto_mode=0
                 move_left; moved=$? ;;
-            # Right
             [dDвВ]|$'\e[C'|$'\eOC')
+                auto_mode=0
                 move_right; moved=$? ;;
-            # Undo
             [uUгГ])
+                auto_mode=0
                 restore_undo_state ;;
-            # Auto / AI mode toggle
             $'\t'|[tTеЕ])
                 auto_mode=$((1 - auto_mode)) ;;
-            # Reset
             [rRкК])
-                init_game ;;
-            # Quit
+                init_game $auto_mode ;;
             [qQйЙ])
                 cleanup ;;
         esac
