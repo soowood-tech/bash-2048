@@ -173,11 +173,11 @@ restore_undo_state() {
 # Slide and merge 4 numbers (represented as an array passed by name)
 # Usage: slide_line row_arr
 slide_and_merge() {
-    local -n line=$1
+    local -n _ref_line=$1
     local non_zero=()
 
     # Step 1: Filter non-zeros
-    for val in "${line[@]}"; do
+    for val in "${_ref_line[@]}"; do
         if [[ $val -ne 0 ]]; then
             non_zero+=($val)
         fi
@@ -209,7 +209,7 @@ slide_and_merge() {
     done
 
     for ((j=0; j<4; j++)); do
-        line[j]=${merged[j]}
+        _ref_line[j]=${merged[j]}
     done
 }
 
